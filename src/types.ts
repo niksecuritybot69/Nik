@@ -24,6 +24,14 @@ export interface ChatConfig {
   editGuardianEnabled: boolean; // /edit on|off — delete edited messages from non-admins
   antiForwardEnabled: boolean; // /anti4ward on|off — delete messages forwarded from channels
   warnings: Record<string, number>; // userId (string) -> warning count, resets on ban
+  verifiedAddresses: Record<string, VerifiedAddressRecord>; // key = lowercased/trimmed address, for /verify + /check
+}
+
+export interface VerifiedAddressRecord {
+  type: string; // "UPI" or a crypto network label like "USDT-BEP20"
+  belongsTo: string; // @username the address belongs to
+  verifiedBy: string; // who ran /verify
+  verifiedAt: string;
 }
 
 export const defaultChatConfig = (): ChatConfig => ({
@@ -43,6 +51,7 @@ export const defaultChatConfig = (): ChatConfig => ({
   editGuardianEnabled: false,
   antiForwardEnabled: false,
   warnings: {},
+  verifiedAddresses: {},
 });
 
 export interface GlobalBanRecord {
