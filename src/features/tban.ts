@@ -32,7 +32,7 @@ export function registerTban(bot: Telegraf): void {
     const untilDate = Math.floor(Date.now() / 1000) + seconds;
 
     try {
-      await ctx.telegram.banChatMember(chatId, targetId, { until_date: untilDate });
+      await ctx.telegram.banChatMember(chatId, targetId, untilDate);
       await ctx.reply(`⏳ User ${targetId} has been temp-banned for ${durationArg}.`);
       await logToChannel(bot, `⏳ Temp-ban: user ${targetId} banned in chat ${chatId} for ${durationArg}.`);
     } catch (err) {
