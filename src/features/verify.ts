@@ -1,12 +1,27 @@
 import { Telegraf } from "telegraf";
+import { getChatConfig, saveChatConfig } from "../db";
 import { isUserInEnvList, escapeHtml, logToChannel } from "../utils";
 
-// Only user IDs listed in VERIFY_ADMINS (comma-separated, in the env) can
-// post a verified address — deliberately separate from "group admin", since
-// in an escrow/trading context you often want a smaller, trusted circle for
-// this specific action than for general moderation.
 function isVerifyAdmin(userId: number): boolean {
   return isUserInEnvList(userId, "VERIFY_ADMINS");
+}
+
+function normalizeAddress(address: string): string {
+  return address.trim().toLowerCase();
+}
+
+function formatUsername(raw: string): string {
+  return raw.startsWith("@") ? raw : `@${raw}`;
+}
+
+function verifiedMessage(address: string, type: string, belongsTo: string): string {
+  return (
+    `✅ <b>VERIFIED ADDRESS</b>\n\n` +
+    `🛡 Address or upi : <code>${escapeHtml(address)}</code>\n` +
+    `🛡 Type: ${escapeHtml(type)}\n` +
+    `👤 Belongs To: ${escapeHtml(belongsTo)}\n\n` +
+    `✅ This address is officially registered and safe to use.`
+  );
 }
 
 export function registerVerify(bot: Telegraf): void {
@@ -15,30 +30,78 @@ export function registerVerify(bot: Telegraf): void {
       return ctx.reply("🚫 You're not authorized to use /verify.");
     }
 
-    const parts = (ctx.message as any).text.split(" ").slice(1);
-    const type = parts[0]?.toLowerCase();
-    const address = parts.slice(1).join(" ").trim();
+    const usage =
+      "Usage:\n" +
+      "/verify upi <username> <address>\n" +
+      "/verify crypto <network> <username> <address>\n" +
+      "Example: /verify crypto USDT-BEP20 @seller 0xabc123...";
 
-    if ((type !== "upi" && type !== "crypto") || !address) {
-      return ctx.reply("Usage: /verify upi <address>  |  /verify crypto <address>");
+    const parts = (ctx.message as any).text.split(" ").slice(1);
+    const kind = parts[0]?.toLowerCase();
+
+    let type: string | undefined;
+    let username: string | undefined;
+    let address: string | undefined;
+
+    if (kind === "upi") {
+      username = parts[1];
+      address = parts.slice(2).join(" ").trim();
+      type = "UPI";
+    } else if (kind === "crypto") {
+      type = parts[1];
+      username = parts[2];
+      address = parts.slice(3).join(" ").trim();
     }
 
-    const label = type === "upi" ? "UPI ID" : "Crypto Address";
+    if (!type || !username || !address) {
+      return ctx.reply(usage);
+    }
+
+    const chatId = ctx.chat.id;
+    const config = getChatConfig(chatId);
+    const key = normalizeAddress(address);
+    const belongsTo = formatUsername(username);
     const verifiedBy = ctx.from.username ? `@${ctx.from.username}` : ctx.from.first_name;
 
-    const msg =
-      `✅ <b>VERIFIED ${label}</b>\n\n` +
-      `<code>${escapeHtml(address)}</code>\n\n` +
-      `Confirmed by ${escapeHtml(verifiedBy)}. Always double-check the address matches ` +
-      `exactly before sending any funds — this confirmation does not cover addresses ` +
-      `sent to you elsewhere, only this exact one.`;
+    config.verifiedAddresses[key] = {
+      type,
+      belongsTo,
+      verifiedBy,
+      verifiedAt: new Date().toISOString(),
+    };
+    saveChatConfig(chatId, config);
 
     const reply = (ctx.message as any).reply_to_message;
-    await ctx.replyWithHTML(msg, reply ? { reply_parameters: { message_id: reply.message_id } } : undefined as any);
+    await ctx.replyWithHTML(
+      verifiedMessage(address, type, belongsTo),
+      reply ? { reply_parameters: { message_id: reply.message_id } } : (undefined as any)
+    );
 
     await logToChannel(
       bot,
-      `✅ VERIFY: ${verifiedBy} (${ctx.from.id}) verified a ${label} in chat ${ctx.chat.id}: ${address}`
+      `✅ VERIFY: ${verifiedBy} (${ctx.from.id}) registered a ${type} address in chat ${chatId} ` +
+        `for ${belongsTo}: ${address}`
     );
+  });
+
+  bot.command("check", async (ctx) => {
+    const parts = (ctx.message as any).text.split(" ").slice(1);
+    const kind = parts[0]?.toLowerCase();
+    const address = parts.slice(1).join(" ").trim();
+
+    if ((kind !== "upi" && kind !== "crypto") || !address) {
+      return ctx.reply("Usage: /check upi <address>  |  /check crypto <address>");
+    }
+
+    const config = getChatConfig(ctx.chat.id);
+    const record = config.verifiedAddresses[normalizeAddress(address)];
+
+    if (!record) {
+      const label = kind === "upi" ? "UPI" : "crypto address";
+      await ctx.reply(`⚠️ This is not a safe ${label}, be aware before dealing.`);
+      return;
+    }
+
+    await ctx.replyWithHTML(verifiedMessage(address, record.type, record.belongsTo));
   });
 }
